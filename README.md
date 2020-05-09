@@ -1,2 +1,1 @@
-# dist_drl_gym
-Distributed Deep Reinforcement Learning with OpenAI Gym
+## Distributed Deep Reinforcement Learning with PyTorch and OpenAI Gym
