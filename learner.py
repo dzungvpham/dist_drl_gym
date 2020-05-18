@@ -1,21 +1,15 @@
 from collections import namedtuple
+from utils import preprocess_screen
+
+import math
+import os
 import random
 import time
-
+import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-MEMORY_CAPACITY = 100000
-BATCH_SIZE = 32
-STEPS_PER_TARGET_UPDATE = 1000
-STEPS_PER_LOG = 100
-GAMMA = 0.99
-OPT_LEARNING_RATE = 0.001
-OPT_MOMENTUM = 0.95
-OPT_WEIGHT_DECAY = 0.0
 
 Transition = namedtuple(
     'Transition', ('state', 'action', 'reward', 'next_state'))
@@ -31,7 +25,7 @@ class ReplayMemory():
     def append(self, mem):
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(**mem)
+        self.memory[self.position] = mem
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
@@ -93,21 +87,49 @@ class DQN(nn.Module):
 
 class Learner():
 
-    def __init__(self, h, w, num_stacked, num_actions):
+    def __init__(
+        self, h, w, num_stacked, game, num_actions,
+        batch_size=32, gamma=0.99,
+        learning_rate=0.01, momentum=0.0, weight_decay=0.0,
+        max_steps_per_ep = 1000, steps_per_target_update=500,
+        steps_per_eval=500, steps_per_log=100,
+        device="cpu", mem_capacity=100000, best_model_save_dir="tmp/"
+        ):
+        self.h = h
+        self.w = w
+        self.num_stacked = num_stacked
+        self.game = game
         self.num_actions = num_actions
-        self.memory = ReplayMemory(MEMORY_CAPACITY)
+        self.batch_size = batch_size
+        self.gamma = gamma
+        self.max_steps_per_ep = max_steps_per_ep
+        self.steps_per_target_update = steps_per_target_update
+        self.steps_per_eval = steps_per_eval
+        self.steps_per_log = steps_per_log
+        self.device = device
+
+        if best_model_save_dir[-1] != '/':
+            best_model_save_dir += '/'
+        self.best_model_save_dir = best_model_save_dir
+        if not os.path.isdir(best_model_save_dir):
+            os.mkdir(best_model_save_dir)
+
+        self.env = gym.make(game)
+        self.memory = ReplayMemory(mem_capacity)
 
         # Policy net for selecting action
-        self.policy_net = DQN(h, w, num_stacked, num_actions).to(DEVICE)
+        self.policy_net = DQN(h, w, num_stacked, num_actions).to(device)
         # Target net for evaluating action
-        self.target_net = DQN(h, w, num_stacked, num_actions).to(DEVICE)
+        self.target_net = DQN(h, w, num_stacked, num_actions).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()  # Freeze weight
 
         # Backprop policy net only
         self.optimizer = optim.RMSprop(
             self.policy_net.parameters(),
-            lr=OPT_LEARNING_RATE, momentum=OPT_MOMENTUM, weight_decay=OPT_WEIGHT_DECAY)
+            lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
+
+        self.best_eval_score = -math.inf
 
     def add_memories(self, memories):
         for mem in memories:
@@ -117,35 +139,37 @@ class Learner():
         return self.policy_net.state_dict()
 
     def learn(self, num_steps):
-        total_loss = 0
-        while (len(self.memory) < BATCH_SIZE):
+        while (len(self.memory) < self.batch_size):
             time.sleep(1)
         print("Learning started...")
 
+        total_loss = 0
+        device = self.device
+
         for step in range(1, num_steps + 1):
-            transitions = self.memory.sample(BATCH_SIZE)
+            transitions = self.memory.sample(self.batch_size)
             batch = Transition(*zip(*transitions))
-            state_batch = torch.cat(batch.state)
-            action_batch = torch.cat(batch.action)
-            reward_batch = torch.cat(batch.reward)
+            state_batch = torch.as_tensor(torch.cat(batch.state), device=device)
+            action_batch = torch.as_tensor(torch.cat(batch.action), device=device)
+            reward_batch = torch.as_tensor(torch.cat(batch.reward), device=device)
 
-            # Calculate value for current state with the given action
-            state_action_values = self.policy_net(state_batch).gather(1, action_batch)
+            # Calculate Q-value for current state with the given action
+            state_action_Q = self.policy_net(state_batch).gather(1, action_batch)
 
-            # Calculate expected value for non-final next states only
-            # Final states have value 0
+            # Calculate expected Q-value for non-final next states only
             non_final_mask = torch.tensor(
                 tuple(map(lambda s: s is not None, batch.next_state)),
-                device=DEVICE, dtype=torch.bool)
+                device=device, dtype=torch.bool)
             non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+            non_final_next_states = torch.as_tensor(non_final_next_states, device=device)
 
-            next_state_values = torch.zeros(BATCH_SIZE, device=DEVICE)
-            next_state_values[non_final_mask] = self.target_net(
+            next_state_Q = torch.zeros(self.batch_size, device=device)
+            next_state_Q[non_final_mask] = self.target_net(
                 non_final_next_states).max(1)[0].detach()
-            expected_state_action_values = GAMMA * next_state_values.unsqueeze(1) + reward_batch
+            expected_state_action_Q = self.gamma * next_state_Q.unsqueeze(1) + reward_batch
 
             # Computer loss
-            loss = F.mse_loss(state_action_values, expected_state_action_values)
+            loss = F.mse_loss(state_action_Q, expected_state_action_Q)
             total_loss += loss.item()
 
             # Backprop
@@ -156,10 +180,66 @@ class Learner():
             self.optimizer.step()
 
             # Update target net periodically with policy net
-            if step % STEPS_PER_TARGET_UPDATE == 0:
+            if step % self.steps_per_target_update == 0:
                 self.target_net.load_state_dict(self.policy_net.state_dict())
+                self.target_net.eval()
 
-            if step % STEPS_PER_LOG == 0:
+            if self.steps_per_log is not None and step % self.steps_per_log == 0:
                 print("Step {0}: Avg. loss = {1} | Mem. capacity = {2}".format(
-                    step, total_loss / STEPS_PER_LOG, len(self.memory)))
+                    step, total_loss / self.steps_per_log, len(self.memory)))
                 total_loss = 0
+
+            if step % self.steps_per_eval == 0:
+                self.eval()
+
+        print("Learning finished.")
+
+    def eval(self):
+        print("Evaluating started...")
+        env = self.env
+        total_reward = 0
+        eps = 0.01
+        num_episodes = 5
+        self.target_net.eval()
+
+        for _ in range(num_episodes):
+            screen = env.reset()
+            if (len(screen.shape) != 3):
+                screen = env.render(mode="rgb_array")
+            screen = torch.as_tensor(preprocess_screen(screen, self.h, self.w))
+
+            # Init first state by duplicating initial screen
+            cur_state = torch.zeros(
+                [1, self.num_stacked, self.h, self.w], dtype=torch.float32)
+            for i in range(self.num_stacked):
+                cur_state[0][i] = screen
+
+            for step in range(self.max_steps_per_ep):
+                # Epsilon-greedy action selection
+                if random.random() > eps:
+                    action = self.target_net(cur_state)[0].argmax().item()
+                else:
+                    action = env.action_space.sample()
+
+                screen, reward, done, _ = env.step(action)
+                total_reward += reward
+                if done:
+                    break
+
+                if len(screen.shape) != 3:
+                    screen = env.render(mode="rgb_array")
+                screen = torch.as_tensor(preprocess_screen(screen, self.h, self.w))
+                cur_state = torch.cat(
+                    (cur_state[:, 1:, ...], screen[None, None, :, :]), axis=1)
+
+            env.close()
+
+        avg_reward = total_reward / num_episodes
+        if avg_reward > self.best_eval_score:
+            print("New highscore: {0} | Previous highscore: {1}".format(avg_reward, self.best_eval_score))
+            self.best_eval_score = avg_reward
+            torch.save(
+                self.target_net.state_dict(),
+                "{0}best_model_{1}.pt".format(self.best_model_save_dir, self.game))
+        else:
+            print("Score: {0} | Current highscore: {1}".format(avg_reward, self.best_eval_score))
