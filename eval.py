@@ -1,4 +1,4 @@
-from utils import preprocess_screen
+from utils import get_preprocessor
 
 import argparse
 import gym
@@ -10,19 +10,20 @@ import torch
 
 
 def eval(
-    target_net, env, h, w, num_stacked, num_actions,
+    target_net, env, game, h, w, num_stacked, num_actions,
     num_episodes=1, max_steps_per_ep=1000, eps=0.01,
     render=False, verbose=False
     ):
     target_net.eval()
     rewards = [0] * num_episodes
+    preprocess_screen = get_preprocessor(h, w, game)
 
     for ep in range(num_episodes):
         episode_reward = 0
         screen = env.reset()
         if (len(screen.shape) != 3):
             screen = env.render(mode="rgb_array")
-        screen = torch.as_tensor(preprocess_screen(screen, h, w))
+        screen = torch.as_tensor(preprocess_screen(screen))
 
         if render:
             env.render(mode="human")
@@ -48,7 +49,7 @@ def eval(
 
             if len(screen.shape) != 3:
                 screen = env.render(mode="rgb_array")
-            screen = torch.as_tensor(preprocess_screen(screen, h, w))
+            screen = torch.as_tensor(preprocess_screen(screen))
             cur_state = torch.cat(
                 (cur_state[:, 1:, ...], screen[None, None, :, :]), axis=1)
 
@@ -88,7 +89,7 @@ if __name__ == "__main__":
     target_net = learner.DQN(h, w, num_stacked, num_actions)
     target_net.load_state_dict(torch.load(args.path))
     rewards = eval(
-        target_net, env, h, w, num_stacked, num_actions,
+        target_net, env, game, h, w, num_stacked, num_actions,
         args.num_episodes, max_steps_per_ep, args.epsilon,
         args.render, args.verbose)
 

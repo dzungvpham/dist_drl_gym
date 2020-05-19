@@ -1,6 +1,5 @@
 from collections import namedtuple
 from eval import eval
-from utils import preprocess_screen
 
 import math
 import numpy as np
@@ -200,7 +199,7 @@ class Learner():
             if step % self.steps_per_eval == 0:
                 print("Evaluating started...")
                 rewards = eval(
-                    self.target_net, self.env, self.h, self.w,
+                    self.target_net, self.env, self.game, self.h, self.w,
                     self.num_stacked, self.num_actions,
                     num_episodes=10, max_steps_per_ep=self.max_steps_per_ep, eps=0.01)
                 avg_reward = np.mean(rewards)

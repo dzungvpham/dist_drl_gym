@@ -1,6 +1,6 @@
 from io import BytesIO
 from learner import DQN
-from utils import preprocess_screen
+from utils import get_preprocessor
 
 import gym
 import numpy as np
@@ -24,6 +24,7 @@ class Actor():
         self.policy_net.eval()
         self.env = gym.make(game)
         self.memory = []
+        self.preprocess_screen = get_preprocessor(h, w, game)
 
     def update_policy_net(self, state_dict_binary):
         with BytesIO(state_dict_binary) as buff:
@@ -40,7 +41,7 @@ class Actor():
         screen = env.reset()
         if (len(screen.shape) != 3):
             screen = env.render(mode="rgb_array")
-        screen = preprocess_screen(screen, self.h, self.w)
+        screen = self.preprocess_screen(screen)
 
         # Init first state by duplicating initial screen
         cur_state = np.zeros(
@@ -63,7 +64,7 @@ class Actor():
                 screen, reward, done, _ = env.step(action)
                 if len(screen.shape) != 3:
                     screen = env.render(mode="rgb_array")
-                screen = preprocess_screen(screen, self.h, self.w)
+                screen = self.preprocess_screen(screen)
                 episode_reward += reward
 
                 next_state = np.concatenate(
