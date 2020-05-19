@@ -6,6 +6,7 @@ from threading import Thread
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import Binary
 
+import argparse
 import gym
 import numpy as np
 import pickle
@@ -44,7 +45,7 @@ class MultiThreadedRPCServer(ThreadingMixIn, SimpleXMLRPCServer):
     pass
 
 
-def run_server(learner, num_actions):
+def run_server(learner, num_actions, port):
     def get_actor_config():
         return {
             "h": INPUT_HEIGHT, "w": INPUT_WIDTH, "num_stacked": INPUT_STACKED,
@@ -80,7 +81,7 @@ def run_server(learner, num_actions):
         add_memories(memories)
         return get_policy_net()
 
-    with MultiThreadedRPCServer(("localhost", 8888), logRequests=False) as server:
+    with MultiThreadedRPCServer(("localhost", port), logRequests=False) as server:
         server.register_function(get_actor_config)
         server.register_function(get_policy_net)
         server.register_function(add_memories)
@@ -91,11 +92,17 @@ def run_server(learner, num_actions):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Create a learner/leader for learning on localhost")
+    parser.add_argument("--port", action="store", type=int, default=8888,
+                        help="Port of leader machine. E.g: 8888")
+    args = parser.parse_args()
+
     num_actions = gym.make(GAME_NAME).action_space.n
     learner = Learner(h=INPUT_HEIGHT, w=INPUT_WIDTH,
                       num_stacked=INPUT_STACKED, game=GAME_NAME, num_actions=num_actions)
 
-    server_thread = Thread(target=run_server, args=(learner, num_actions))
+    server_thread = Thread(target=run_server, args=(learner, num_actions, args.port))
     server_thread.setDaemon(True)  # make thread exit when main exit
     server_thread.start()
 

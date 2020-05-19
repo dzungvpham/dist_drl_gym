@@ -3,6 +3,7 @@ from eval import eval
 from utils import preprocess_screen
 
 import math
+import numpy as np
 import os
 import random
 import time
@@ -192,10 +193,11 @@ class Learner():
 
             if step % self.steps_per_eval == 0:
                 print("Evaluating started...")
-                avg_reward = eval(
+                rewards = eval(
                     self.target_net, self.env, self.h, self.w,
                     self.num_stacked, self.num_actions,
                     num_episodes=10, max_steps_per_ep=self.max_steps_per_ep, eps=0.01)
+                avg_reward = np.mean(rewards)
 
                 if avg_reward > self.best_eval_score:
                     print("New highscore: {0} | Previous highscore: {1}".format(
