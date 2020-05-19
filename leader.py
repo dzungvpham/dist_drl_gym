@@ -94,13 +94,21 @@ def run_server(learner, num_actions, port):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Create a learner/leader for learning on localhost")
+    parser.add_argument("--load_path", action="store",
+                        help="Path to load state dict for initialization")
     parser.add_argument("--port", action="store", type=int, default=8888,
                         help="Port of leader machine. E.g: 8888")
+    parser.add_argument("--save_dir", action="store", default="tmp/",
+                        help="Directory to save checkpoints")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Enable printing details about each step.")
     args = parser.parse_args()
 
     num_actions = gym.make(GAME_NAME).action_space.n
-    learner = Learner(h=INPUT_HEIGHT, w=INPUT_WIDTH,
-                      num_stacked=INPUT_STACKED, game=GAME_NAME, num_actions=num_actions)
+    learner = Learner(
+        h=INPUT_HEIGHT, w=INPUT_WIDTH, num_stacked=INPUT_STACKED,
+        game=GAME_NAME, num_actions=num_actions,
+        load_path = args.load_path, save_dir=args.save_dir, verbose=args.verbose)
 
     server_thread = Thread(target=run_server, args=(learner, num_actions, args.port))
     server_thread.setDaemon(True)  # make thread exit when main exit

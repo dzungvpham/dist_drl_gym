@@ -95,7 +95,8 @@ class Learner():
         learning_rate=0.01, momentum=0.0, weight_decay=0.0,
         max_steps_per_ep = 1000, steps_per_target_update=500,
         steps_per_eval=500, steps_per_log=100,
-        device="cpu", mem_capacity=100000, best_model_save_dir="tmp/"
+        device="cpu", mem_capacity=100000,
+        load_path=None, save_dir=None, verbose=False
         ):
         self.h = h
         self.w = w
@@ -109,18 +110,23 @@ class Learner():
         self.steps_per_eval = steps_per_eval
         self.steps_per_log = steps_per_log
         self.device = device
+        self.verbose = verbose
 
-        if best_model_save_dir[-1] != '/':
-            best_model_save_dir += '/'
-        self.best_model_save_dir = best_model_save_dir
-        if not os.path.isdir(best_model_save_dir):
-            os.mkdir(best_model_save_dir)
+        if save_dir is not None:
+            if save_dir[-1] != '/':
+                save_dir += '/'
+            if not os.path.isdir(save_dir):
+                os.mkdir(save_dir)
+        self.save_dir = save_dir
 
         self.env = gym.make(game)
         self.memory = ReplayMemory(mem_capacity)
 
         # Policy net for selecting action
         self.policy_net = DQN(h, w, num_stacked, num_actions).to(device)
+        if load_path is not None:
+            self.policy_net.load_state_dict(torch.load(load_path, map_location=device))
+
         # Target net for evaluating action
         self.target_net = DQN(h, w, num_stacked, num_actions).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -186,7 +192,7 @@ class Learner():
                 self.target_net.load_state_dict(self.policy_net.state_dict())
                 self.target_net.eval()
 
-            if self.steps_per_log is not None and step % self.steps_per_log == 0:
+            if self.verbose and step % self.steps_per_log == 0:
                 print("Step {0}: Avg. loss = {1} | Mem. capacity = {2}".format(
                     step, total_loss / self.steps_per_log, len(self.memory)))
                 total_loss = 0
@@ -203,10 +209,12 @@ class Learner():
                     print("New highscore: {0} | Previous highscore: {1}".format(
                         avg_reward, self.best_eval_score))
                     self.best_eval_score = avg_reward
-                    torch.save(
-                        self.target_net.state_dict(),
-                        "{0}best_model_{1}.pt".format(
-                            self.best_model_save_dir, self.game))
+
+                    if self.save_dir is not None:
+                        torch.save(
+                            self.target_net.state_dict(),
+                            "{0}best_model_{1}.pt".format(
+                                self.save_dir, self.game))
                 else:
                     print("Score: {0} | Current highscore: {1}".format(
                         avg_reward, self.best_eval_score))
