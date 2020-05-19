@@ -1,6 +1,7 @@
 from collections import namedtuple
 from io import BytesIO
 from learner import Learner, ReplayMemory, Transition
+from socketserver import ThreadingMixIn
 from threading import Thread
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import Binary
@@ -22,8 +23,7 @@ MIN_EPS = 0.1
 EPS_STEP = 0.001
 MAX_STEPS_PER_EP = 1000
 NUM_EPISODES_PER_ACTOR = 1000
-EPISODES_PER_POLICY_UPDATE = 5
-EPISODES_PER_MEMORY_UPDATE = 5
+EPISODES_PER_UPDATE = 5
 FRAME_SKIP_MIN = 2
 FRAME_SKIP_MAX = 4
 
@@ -40,6 +40,10 @@ MOMENTUM = 0.95
 WEIGHT_DECAY = 0.0
 
 
+class MultiThreadedRPCServer(ThreadingMixIn, SimpleXMLRPCServer):
+    pass
+
+
 def run_server(learner, num_actions):
     def get_actor_config():
         return {
@@ -48,8 +52,7 @@ def run_server(learner, num_actions):
             "max_eps": MAX_EPS, "min_eps": MIN_EPS, "eps_step": EPS_STEP,
             "max_steps_per_ep": MAX_STEPS_PER_EP,
             "num_episodes": NUM_EPISODES_PER_ACTOR,
-            "episodes_per_policy_update": EPISODES_PER_POLICY_UPDATE,
-            "episodes_per_memory_update": EPISODES_PER_MEMORY_UPDATE,
+            "episodes_per_update": EPISODES_PER_UPDATE,
             "frame_skip_min": FRAME_SKIP_MIN,
             "frame_skip_max": FRAME_SKIP_MAX
         }
@@ -73,23 +76,27 @@ def run_server(learner, num_actions):
         learner.add_memories(list(map(_convert_mem_to_transition, memories)))
         return True
 
-    with SimpleXMLRPCServer(("localhost", 8888,), logRequests=False) as server:
+    def add_memories_and_get_policy_net(memories):
+        add_memories(memories)
+        return get_policy_net()
+
+    with MultiThreadedRPCServer(("localhost", 8888), logRequests=False) as server:
         server.register_function(get_actor_config)
-        server.register_function(add_memories)
         server.register_function(get_policy_net)
+        server.register_function(add_memories)
+        server.register_function(add_memories_and_get_policy_net)
 
         print("Server started...")
         server.serve_forever()
 
-# =============== MAIN ===============
 
+if __name__ == "__main__":
+    num_actions = gym.make(GAME_NAME).action_space.n
+    learner = Learner(h=INPUT_HEIGHT, w=INPUT_WIDTH,
+                      num_stacked=INPUT_STACKED, game=GAME_NAME, num_actions=num_actions)
 
-num_actions = gym.make(GAME_NAME).action_space.n
-learner = Learner(h=INPUT_HEIGHT, w=INPUT_WIDTH,
-                  num_stacked=INPUT_STACKED, game=GAME_NAME, num_actions=num_actions)
+    server_thread = Thread(target=run_server, args=(learner, num_actions))
+    server_thread.setDaemon(True)  # make thread exit when main exit
+    server_thread.start()
 
-server_thread = Thread(target=run_server, args=(learner, num_actions))
-server_thread.setDaemon(True)  # make thread exit when main exit
-server_thread.start()
-
-learner.learn(NUM_STEPS)
+    learner.learn(NUM_STEPS)
