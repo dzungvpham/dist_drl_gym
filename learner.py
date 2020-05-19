@@ -1,4 +1,5 @@
 from collections import namedtuple
+from eval import eval
 from utils import preprocess_screen
 
 import math
@@ -190,56 +191,22 @@ class Learner():
                 total_loss = 0
 
             if step % self.steps_per_eval == 0:
-                self.eval()
+                print("Evaluating started...")
+                avg_reward = eval(
+                    self.target_net, self.env, self.h, self.w,
+                    self.num_stacked, self.num_actions,
+                    num_episodes=10, max_steps_per_ep=self.max_steps_per_ep, eps=0.01)
+
+                if avg_reward > self.best_eval_score:
+                    print("New highscore: {0} | Previous highscore: {1}".format(
+                        avg_reward, self.best_eval_score))
+                    self.best_eval_score = avg_reward
+                    torch.save(
+                        self.target_net.state_dict(),
+                        "{0}best_model_{1}.pt".format(
+                            self.best_model_save_dir, self.game))
+                else:
+                    print("Score: {0} | Current highscore: {1}".format(
+                        avg_reward, self.best_eval_score))
 
         print("Learning finished.")
-
-    def eval(self):
-        print("Evaluating started...")
-        env = self.env
-        total_reward = 0
-        eps = 0.01
-        num_episodes = 5
-        self.target_net.eval()
-
-        for _ in range(num_episodes):
-            screen = env.reset()
-            if (len(screen.shape) != 3):
-                screen = env.render(mode="rgb_array")
-            screen = torch.as_tensor(preprocess_screen(screen, self.h, self.w))
-
-            # Init first state by duplicating initial screen
-            cur_state = torch.zeros(
-                [1, self.num_stacked, self.h, self.w], dtype=torch.float32)
-            for i in range(self.num_stacked):
-                cur_state[0][i] = screen
-
-            for step in range(self.max_steps_per_ep):
-                # Epsilon-greedy action selection
-                if random.random() > eps:
-                    action = self.target_net(cur_state)[0].argmax().item()
-                else:
-                    action = env.action_space.sample()
-
-                screen, reward, done, _ = env.step(action)
-                total_reward += reward
-                if done:
-                    break
-
-                if len(screen.shape) != 3:
-                    screen = env.render(mode="rgb_array")
-                screen = torch.as_tensor(preprocess_screen(screen, self.h, self.w))
-                cur_state = torch.cat(
-                    (cur_state[:, 1:, ...], screen[None, None, :, :]), axis=1)
-
-            env.close()
-
-        avg_reward = total_reward / num_episodes
-        if avg_reward > self.best_eval_score:
-            print("New highscore: {0} | Previous highscore: {1}".format(avg_reward, self.best_eval_score))
-            self.best_eval_score = avg_reward
-            torch.save(
-                self.target_net.state_dict(),
-                "{0}best_model_{1}.pt".format(self.best_model_save_dir, self.game))
-        else:
-            print("Score: {0} | Current highscore: {1}".format(avg_reward, self.best_eval_score))

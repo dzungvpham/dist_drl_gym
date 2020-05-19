@@ -1,13 +1,16 @@
-from learner import DQN
 from utils import preprocess_screen
 
+import learner
 import gym
 import random
 import sys
 import torch
 
 
-def eval(target_net, env, h, w, num_stacked, num_actions, num_episodes, max_steps_per_ep, eps):
+def eval(
+    target_net, env, h, w, num_stacked, num_actions,
+    num_episodes=1, max_steps_per_ep=1000, eps=0.01
+    ):
     target_net.eval()
     total_reward = 0
 
@@ -56,7 +59,7 @@ if __name__ == "__main__":
     max_steps_per_ep = 1000
     eps = 0.01
 
-    target_net = DQN(h, w, num_stacked, num_actions)
+    target_net = learner.DQN(h, w, num_stacked, num_actions)
     target_net.load_state_dict(torch.load(sys.argv[1]))
     avg_reward = eval(target_net, env, h, w, num_stacked,
                       num_actions, num_episodes, max_steps_per_ep, eps)
