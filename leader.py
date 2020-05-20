@@ -81,7 +81,7 @@ def run_server(learner, num_actions, port):
         add_memories(memories)
         return get_policy_net()
 
-    with MultiThreadedRPCServer(("localhost", port), logRequests=False) as server:
+    with MultiThreadedRPCServer(("0.0.0.0", port), logRequests=False) as server:
         server.register_function(get_actor_config)
         server.register_function(get_policy_net)
         server.register_function(add_memories)
