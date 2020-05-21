@@ -13,7 +13,7 @@ import pickle
 import torch
 
 # General config
-GAME_NAME = "Pong-v0"
+GAME_NAME = "CartPole-v1"
 INPUT_HEIGHT = 64
 INPUT_WIDTH = 64
 INPUT_STACKED = 4
@@ -33,10 +33,10 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 NUM_STEPS = 10000000
 BATCH_SIZE = 32
 MEMORY_CAPACITY = 1000000
-STEPS_PER_TARGET_UPDATE = 1000
+STEPS_PER_TARGET_UPDATE = 100
 STEPS_PER_LOG = 100
 GAMMA = 0.99
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.01
 MOMENTUM = 0.95
 WEIGHT_DECAY = 0.0
 
@@ -100,6 +100,8 @@ if __name__ == "__main__":
                         help="Port of leader machine. E.g: 8888")
     parser.add_argument("--save_dir", action="store", default="tmp/",
                         help="Directory to save checkpoints")
+    parser.add_argument("-t", "--time", action="store", type=int,
+                        help="Number of learn steps to measure wall time.")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable printing details about each step.")
     args = parser.parse_args()
@@ -108,7 +110,8 @@ if __name__ == "__main__":
     learner = Learner(
         h=INPUT_HEIGHT, w=INPUT_WIDTH, num_stacked=INPUT_STACKED,
         game=GAME_NAME, num_actions=num_actions,
-        load_path = args.load_path, save_dir=args.save_dir, verbose=args.verbose)
+        load_path = args.load_path, save_dir=args.save_dir,
+        time=args.time, verbose=args.verbose)
 
     server_thread = Thread(target=run_server, args=(learner, num_actions, args.port))
     server_thread.setDaemon(True)  # make thread exit when main exit

@@ -95,7 +95,7 @@ class Learner():
         max_steps_per_ep = 1000, steps_per_target_update=500,
         steps_per_eval=500, steps_per_log=100,
         device="cpu", mem_capacity=100000,
-        load_path=None, save_dir=None, verbose=False
+        load_path=None, save_dir=None, time=None, verbose=False
         ):
         self.h = h
         self.w = w
@@ -109,6 +109,7 @@ class Learner():
         self.steps_per_eval = steps_per_eval
         self.steps_per_log = steps_per_log
         self.device = device
+        self.time = time
         self.verbose = verbose
 
         if save_dir is not None:
@@ -145,57 +146,75 @@ class Learner():
     def get_policy_net(self):
         return self.policy_net.state_dict()
 
+    def step(self):
+        device = self.device
+
+        # Sample from memory
+        transitions = self.memory.sample(self.batch_size)
+        batch = Transition(*zip(*transitions))
+        state_batch = torch.as_tensor(torch.cat(batch.state), device=device)
+        action_batch = torch.as_tensor(torch.cat(batch.action), device=device)
+        reward_batch = torch.as_tensor(torch.cat(batch.reward), device=device)
+
+        # Calculate Q-value for current state with the given action
+        state_action_Q = self.policy_net(state_batch).gather(1, action_batch)
+
+        # Calculate expected Q-value for non-final next states only
+        non_final_mask = torch.tensor(
+            tuple(map(lambda s: s is not None, batch.next_state)),
+            device=device, dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+        non_final_next_states = torch.as_tensor(non_final_next_states, device=device)
+
+        next_state_Q = torch.zeros(self.batch_size, device=device)
+        next_state_Q[non_final_mask] = self.target_net(
+            non_final_next_states).max(1)[0].detach()
+        expected_state_action_Q = self.gamma * next_state_Q.unsqueeze(1) + reward_batch
+
+        # Computer loss
+        loss = F.mse_loss(state_action_Q, expected_state_action_Q)
+        loss_val = loss.item()
+
+        # Backprop
+        self.optimizer.zero_grad()
+        loss.backward()
+        for param in self.policy_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+        self.optimizer.step()
+
+        return loss_val
+
     def learn(self, num_steps):
         while (len(self.memory) < self.batch_size):
             time.sleep(1)
         print("Learning started...")
 
         total_loss = 0
-        device = self.device
+        time_elapsed = 0
 
         for step in range(1, num_steps + 1):
-            transitions = self.memory.sample(self.batch_size)
-            batch = Transition(*zip(*transitions))
-            state_batch = torch.as_tensor(torch.cat(batch.state), device=device)
-            action_batch = torch.as_tensor(torch.cat(batch.action), device=device)
-            reward_batch = torch.as_tensor(torch.cat(batch.reward), device=device)
-
-            # Calculate Q-value for current state with the given action
-            state_action_Q = self.policy_net(state_batch).gather(1, action_batch)
-
-            # Calculate expected Q-value for non-final next states only
-            non_final_mask = torch.tensor(
-                tuple(map(lambda s: s is not None, batch.next_state)),
-                device=device, dtype=torch.bool)
-            non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
-            non_final_next_states = torch.as_tensor(non_final_next_states, device=device)
-
-            next_state_Q = torch.zeros(self.batch_size, device=device)
-            next_state_Q[non_final_mask] = self.target_net(
-                non_final_next_states).max(1)[0].detach()
-            expected_state_action_Q = self.gamma * next_state_Q.unsqueeze(1) + reward_batch
-
-            # Computer loss
-            loss = F.mse_loss(state_action_Q, expected_state_action_Q)
-            total_loss += loss.item()
-
-            # Backprop
-            self.optimizer.zero_grad()
-            loss.backward()
-            for param in self.policy_net.parameters():
-                param.grad.data.clamp_(-1, 1)
-            self.optimizer.step()
+            start_time = time.time()
+            total_loss += self.step()
+            end_time = time.time()
+            if self.time is not None:
+                time_elapsed += end_time - start_time
+                if step % self.time == 0:
+                    print("Wall time for last {0} step(s): {1} sec".format(
+                        self.time, round(time_elapsed, 2)))
+                    time_elapsed = 0
 
             # Update target net periodically with policy net
             if step % self.steps_per_target_update == 0:
                 self.target_net.load_state_dict(self.policy_net.state_dict())
                 self.target_net.eval()
 
+            # Log
             if self.verbose and step % self.steps_per_log == 0:
                 print("Step {0}: Avg. loss = {1} | Mem. capacity = {2}".format(
                     step, total_loss / self.steps_per_log, len(self.memory)))
                 total_loss = 0
 
+            # Eval
             if step % self.steps_per_eval == 0:
                 print("Evaluating started...")
                 rewards = eval(
